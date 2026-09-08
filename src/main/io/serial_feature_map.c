@@ -137,6 +137,10 @@ static uint32_t telemetryProviderFunctionMask(unsigned providerIndex)
     case TELEMETRY_PROTOCOL_IBUS:
         return FUNCTION_TELEMETRY_IBUS;
 #endif
+#ifdef USE_TELEMETRY_CUSTOM
+    case TELEMETRY_PROTOCOL_CUSTOM:
+        return FUNCTION_TELEMETRY_CUSTOM;
+#endif
     default:
         return 0;
     }
@@ -455,6 +459,9 @@ static unsigned countTelemetryBits(uint32_t mask)
 #ifdef USE_TELEMETRY_IBUS
     if (mask & FUNCTION_TELEMETRY_IBUS) n++;
 #endif
+#ifdef USE_TELEMETRY_CUSTOM
+    if (mask & FUNCTION_TELEMETRY_CUSTOM) n++;
+#endif
     (void)mask;  // a providers build without any sub-protocol touches none
     return n;
 }
@@ -619,6 +626,9 @@ bool serialApplyFunctionMask(serialPortIdentifier_e identifier, uint32_t mask)
 #endif
 #ifdef USE_TELEMETRY_IBUS
     if (mask & FUNCTION_TELEMETRY_IBUS) assignTelemetrySlot(identifier, TELEMETRY_PROTOCOL_IBUS);
+#endif
+#ifdef USE_TELEMETRY_CUSTOM
+    if (mask & FUNCTION_TELEMETRY_CUSTOM) assignTelemetrySlot(identifier, TELEMETRY_PROTOCOL_CUSTOM);
 #endif
 #endif
 

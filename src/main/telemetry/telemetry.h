@@ -50,6 +50,7 @@ typedef enum {
     TELEMETRY_PROTOCOL_SMARTPORT,
     TELEMETRY_PROTOCOL_MAVLINK,
     TELEMETRY_PROTOCOL_IBUS,
+    TELEMETRY_PROTOCOL_CUSTOM,
     TELEMETRY_PROTOCOL_COUNT
 } telemetryProtocol_e;
 
@@ -89,9 +90,15 @@ typedef struct telemetryProvider_s {
 #else
 #define TELEMETRY_HAS_IBUS 0
 #endif
+#ifdef USE_TELEMETRY_CUSTOM
+#define TELEMETRY_HAS_CUSTOM 1
+#else
+#define TELEMETRY_HAS_CUSTOM 0
+#endif
 
 #define TELEMETRY_PROVIDERS_AVAILABLE (TELEMETRY_HAS_FRSKY_HUB + TELEMETRY_HAS_HOTT + TELEMETRY_HAS_LTM \
-                                     + TELEMETRY_HAS_SMARTPORT + TELEMETRY_HAS_MAVLINK + TELEMETRY_HAS_IBUS)
+                                     + TELEMETRY_HAS_SMARTPORT + TELEMETRY_HAS_MAVLINK + TELEMETRY_HAS_IBUS \
+                                     + TELEMETRY_HAS_CUSTOM)
 
 // Concurrent telemetry protocols. Well short of one slot per protocol, which no
 // craft needs and which costs a settings entry per slot. A target may override

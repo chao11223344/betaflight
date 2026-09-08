@@ -596,7 +596,7 @@ static const char * const lookupTableBaudRate[] = {
 
 #ifdef USE_TELEMETRY
 static const char * const lookupTableTelemetryProtocol[] = {
-    "NONE", "FRSKY_HUB", "HOTT", "LTM", "SMARTPORT", "MAVLINK", "IBUS"
+    "NONE", "FRSKY_HUB", "HOTT", "LTM", "SMARTPORT", "MAVLINK", "IBUS", "CUSTOM"
 };
 #endif
 

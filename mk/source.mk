@@ -285,6 +285,7 @@ COMMON_SRC = \
             sensors/rangefinder.c \
             sensors/opticalflow.c \
             telemetry/telemetry.c \
+            telemetry/custom.c \
             telemetry/crsf.c \
             telemetry/ghst.c \
             telemetry/srxl.c \

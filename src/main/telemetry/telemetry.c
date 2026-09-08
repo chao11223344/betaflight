@@ -56,6 +56,7 @@
 #include "telemetry/jetiexbus.h"
 #include "telemetry/mavlink.h"
 #include "telemetry/crsf.h"
+#include "telemetry/custom.h"
 #include "telemetry/ghst.h"
 #include "telemetry/srxl.h"
 #include "telemetry/ibus.h"
@@ -164,6 +165,9 @@ uint8_t telemetryProviderBaud(uint8_t protocol, serialPortIdentifier_e identifie
 
 void telemetryInit(void)
 {
+#ifdef USE_TELEMETRY_CUSTOM
+    initCustomTelemetry();
+#endif
 #ifdef USE_TELEMETRY_FRSKY_HUB
     initFrSkyHubTelemetry();
 #endif
@@ -255,6 +259,9 @@ serialPort_t *telemetrySharedPort = NULL;
 
 void telemetryCheckState(void)
 {
+#ifdef USE_TELEMETRY_CUSTOM
+    checkCustomTelemetryState();
+#endif
 #ifdef USE_TELEMETRY_FRSKY_HUB
     checkFrSkyHubTelemetryState();
 #endif
@@ -289,6 +296,9 @@ void telemetryCheckState(void)
 
 void telemetryProcess(uint32_t currentTime)
 {
+#ifdef USE_TELEMETRY_CUSTOM
+    handleCustomTelemetry(currentTime);
+#endif
 #ifdef USE_TELEMETRY_FRSKY_HUB
     handleFrSkyHubTelemetry(currentTime);
 #else
