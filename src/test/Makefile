@@ -516,6 +516,13 @@ telemetry_hott_unittest_SRC := \
 		$(USER_DIR)/io/serial_resource.c \
 		$(USER_DIR)/common/gps_conversion.c
 
+telemetry_custom_unittest_SRC := \
+		$(USER_DIR)/telemetry/custom.c \
+		$(USER_DIR)/common/crc.c \
+		$(USER_DIR)/common/streambuf.c
+
+telemetry_custom_unittest_DEFINES := USE_TELEMETRY_CUSTOM=
+
 
 telemetry_ibus_unittest_SRC := \
 		$(USER_DIR)/telemetry/ibus_shared.c \

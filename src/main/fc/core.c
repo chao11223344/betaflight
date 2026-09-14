@@ -115,6 +115,7 @@
 #include "sensors/gyro.h"
 
 #include "telemetry/telemetry.h"
+#include "telemetry/custom.h"
 
 #include "core.h"
 
@@ -520,6 +521,9 @@ void disarm(flightLogDisarmReason_e reason)
             ENABLE_ARMING_FLAG(WAS_EVER_ARMED);
         }
         DISABLE_ARMING_FLAG(ARMED); // disarm now
+#ifdef USE_TELEMETRY_CUSTOM
+        customTelemetryOnDisarm();
+#endif
         lastDisarmTimeUs = micros();
 
 #ifdef USE_OSD
@@ -630,6 +634,9 @@ if (isMotorProtocolDshot()) {
         mixerResetRpmLimiter();
 #endif
         ENABLE_ARMING_FLAG(ARMED);  // ***ARM NOW ***
+#ifdef USE_TELEMETRY_CUSTOM
+        customTelemetryOnArm();
+#endif
 
 #ifdef USE_RC_STATS
         NotifyRcStatsArming();

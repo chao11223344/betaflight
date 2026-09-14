@@ -20,6 +20,7 @@
 #include "common/maths.h"
 
 #include "drivers/serial.h"
+#include "drivers/time.h"
 
 #include "fc/runtime_config.h"
 
@@ -38,7 +39,7 @@
 #include "telemetry/custom.h"
 #include "telemetry/telemetry.h"
 
-#define CUSTOM_TELEMETRY_FRAME_SIZE 40
+#define CUSTOM_TELEMETRY_FRAME_SIZE 44
 #define CUSTOM_TELEMETRY_RATE_HZ 50
 
 enum {
@@ -57,6 +58,24 @@ static portSharing_e customPortSharing;
 static bool customEnabled;
 static uint16_t customSequence;
 static uint32_t lastFrameTimeUs;
+static uint32_t flightStartMs;
+static uint32_t flightElapsedMs;
+static bool flightTimerRunning;
+
+void customTelemetryOnArm(void)
+{
+    flightStartMs = millis();
+    flightElapsedMs = 0;
+    flightTimerRunning = true;
+}
+
+void customTelemetryOnDisarm(void)
+{
+    if (flightTimerRunning) {
+        flightElapsedMs = (uint32_t)(millis() - flightStartMs);
+        flightTimerRunning = false;
+    }
+}
 
 static void putU16(uint8_t *buffer, unsigned *offset, uint16_t value)
 {
@@ -75,8 +94,9 @@ static int16_t scaledInt16(float value, float scale)
     return (int16_t)lrintf(constrainf(value * scale, INT16_MIN, INT16_MAX));
 }
 
-static void sendCustomFrame(uint32_t currentTimeUs)
+static void sendCustomFrame(void)
 {
+    const uint32_t currentTimeMs = millis();
     uint8_t frame[CUSTOM_TELEMETRY_FRAME_SIZE];
     unsigned offset = 0;
     uint16_t validFlags = 0;
@@ -113,10 +133,10 @@ static void sendCustomFrame(uint32_t currentTimeUs)
 
     frame[offset++] = 0xAA;
     frame[offset++] = 0x55;
-    frame[offset++] = 1; // Protocol version.
+    frame[offset++] = 2; // Protocol version.
     frame[offset++] = CUSTOM_TELEMETRY_FRAME_SIZE;
     putU16(frame, &offset, customSequence++);
-    putU32(frame, &offset, currentTimeUs / 1000);
+    putU32(frame, &offset, currentTimeMs);
     putU16(frame, &offset, validFlags);
 
 #ifdef USE_GPS
@@ -149,6 +169,8 @@ static void sendCustomFrame(uint32_t currentTimeUs)
         putU16(frame, &offset, 0);
     }
 #endif
+
+    putU32(frame, &offset, flightTimerRunning ? (uint32_t)(currentTimeMs - flightStartMs) : flightElapsedMs);
 
     const uint16_t crc = crc16_ccitt_update(0xFFFF, &frame[2], offset - 2);
     putU16(frame, &offset, crc);
@@ -221,7 +243,7 @@ void handleCustomTelemetry(uint32_t currentTimeUs)
 
     if ((uint32_t)(currentTimeUs - lastFrameTimeUs) >= (1000000U / CUSTOM_TELEMETRY_RATE_HZ)) {
         lastFrameTimeUs = currentTimeUs;
-        sendCustomFrame(currentTimeUs);
+        sendCustomFrame();
     }
 }
 

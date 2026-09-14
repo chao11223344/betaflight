@@ -12,14 +12,14 @@
 #include <stdint.h>
 
 /*
- * CUSTOM telemetry protocol version 1
+ * CUSTOM telemetry protocol version 2
  *
- * All multi-byte fields are little-endian. The 40-byte frame is sent at 50 Hz:
+ * All multi-byte fields are little-endian. The 44-byte frame is sent at 50 Hz:
  *
  * Offset  Size  Type     Field / unit
  *   0       2   uint8    Sync bytes 0xAA, 0x55
- *   2       1   uint8    Protocol version (1)
- *   3       1   uint8    Total frame length (40)
+ *   2       1   uint8    Protocol version (2)
+ *   3       1   uint8    Total frame length (44)
  *   4       2   uint16   Sequence number
  *   6       4   uint32   Time since boot, ms
  *  10       2   uint16   Valid/status flags
@@ -29,7 +29,8 @@
  *  22       4   int32    Indicated airspeed, cm/s
  *  26       6   int16[3] Body gyro X/Y/Z, 0.1 deg/s
  *  32       6   int16[3] Body acceleration X/Y/Z including gravity, mg
- *  38       2   uint16   CRC-16/CCITT over bytes 2..37, initial value 0xFFFF
+ *  38       4   uint32   Armed duration, ms; reset on arm, retained on disarm
+ *  42       2   uint16   CRC-16/CCITT over bytes 2..41, initial value 0xFFFF
  *
  * Valid/status flags: bit 0 GPS sensor, bit 1 GPS fix, bit 2 calibrated baro,
  * bit 3 calibrated airspeed, bit 4 calibrated gyro, bit 5 accelerometer data,
@@ -40,3 +41,5 @@
 void initCustomTelemetry(void);
 void checkCustomTelemetryState(void);
 void handleCustomTelemetry(uint32_t currentTimeUs);
+void customTelemetryOnArm(void);
+void customTelemetryOnDisarm(void);
