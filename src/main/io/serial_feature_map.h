@@ -53,7 +53,7 @@ typedef struct serialPortClaim_s {
 } serialPortClaim_t;
 
 // Every *_uart setting that can name one port at once.
-#define SERIAL_PORT_CLAIM_MAX 17
+#define SERIAL_PORT_CLAIM_MAX 18
 
 unsigned serialGetPortClaims(serialPortIdentifier_e identifier, serialPortClaim_t *claims, unsigned maxClaims);
 

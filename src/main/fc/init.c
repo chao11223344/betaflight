@@ -26,6 +26,7 @@
 #include "platform.h"
 
 #include "blackbox/blackbox.h"
+#include "io/uart_logger.h"
 
 #include "build/build_config.h"
 #include "build/debug.h"
@@ -1050,7 +1051,9 @@ void initPhase3(void)
 
 #ifdef USE_MOTOR
     motorPostInit();
-    motorEnable();
+    if (!uartLoggerEnabled()) {
+        motorEnable();
+    }
 #endif
 
 // allocate SPI DMA streams after motor timers as SPI DMA allocate will always be possible
@@ -1081,6 +1084,7 @@ void initPhase3(void)
 #endif
 
     tasksInit();
+    uartLoggerInit();
 
     systemState |= SYSTEM_STATE_READY;
 }

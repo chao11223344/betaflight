@@ -25,6 +25,7 @@
 #include <string.h>
 
 #include "platform.h"
+#include "io/uart_logger.h"
 
 #ifdef USE_MOTOR
 
@@ -359,6 +360,9 @@ void motorDisable(void)
 
 void motorEnable(void)
 {
+    if (uartLoggerEnabled()) {
+        return;
+    }
     if (motorDevice.initialized && motorDevice.vTable->enable()) {
         motorDevice.enabled = true;
         motorDevice.motorEnableTimeMs = millis();

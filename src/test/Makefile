@@ -169,6 +169,12 @@ battery_profile_unittest_SRC := \
 		$(USER_DIR)/common/streambuf.c \
 		$(USER_DIR)/pg/pg.c
 
+uart_logger_unittest_SRC := \
+        $(USER_DIR)/io/uart_logger.c \
+        $(USER_DIR)/common/crc.c \
+        $(USER_DIR)/common/streambuf.c
+uart_logger_unittest_DEFINES := USE_FLASHFS=
+
 blackbox_unittest_SRC :=  \
 		$(USER_DIR)/blackbox/blackbox.c \
 		$(USER_DIR)/blackbox/blackbox_encoding.c \

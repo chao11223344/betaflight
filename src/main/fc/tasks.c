@@ -68,6 +68,7 @@
 #include "io/dashboard.h"
 #include "io/dronecan/dronecan.h"
 #include "io/flashfs.h"
+#include "io/uart_logger.h"
 #include "io/gimbal_control.h"
 #include "io/gps.h"
 #include "io/ledstrip.h"
@@ -136,6 +137,7 @@ static void taskMain(timeUs_t currentTimeUs)
 
 #ifdef USE_FLASHFS
     flashfsEraseAsync();
+    uartLoggerUpdate();
 #endif
 }
 

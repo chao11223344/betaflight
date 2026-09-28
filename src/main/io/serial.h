@@ -34,6 +34,7 @@ typedef enum {
 
 typedef enum {
     FUNCTION_NONE                = 0,
+    FUNCTION_UART_LOGGER         = (1 << 20),
     FUNCTION_MSP                 = (1 << 0),  // 1
     FUNCTION_GPS                 = (1 << 1),  // 2
     FUNCTION_TELEMETRY_FRSKY_HUB = (1 << 2),  // 4

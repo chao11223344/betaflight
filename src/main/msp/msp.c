@@ -96,6 +96,7 @@
 #include "io/beeper.h"
 #include "io/displayport_msp.h"
 #include "io/flashfs.h"
+#include "io/uart_logger.h"
 #include "io/gimbal.h"
 #include "io/gps.h"
 #include "io/ledstrip.h"
@@ -548,6 +549,7 @@ enum compressionType_e {
 
 RAM_CODE static void serializeDataflashReadReply(sbuf_t *dst, uint32_t address, const uint16_t size, bool useLegacyFormat, bool allowCompression)
 {
+    uartLoggerStop();
     STATIC_ASSERT(MSP_PORT_DATAFLASH_INFO_SIZE >= 16, MSP_PORT_DATAFLASH_INFO_SIZE_invalid);
 
     uint16_t readLen = size;
@@ -4104,7 +4106,12 @@ RAM_CODE static mspResult_e mspProcessInCommand(mspDescriptor_t srcDesc, int16_t
 
 #if defined(USE_FLASHFS) && defined(USE_BLACKBOX)
     case MSP_DATAFLASH_ERASE:
-        blackboxEraseAll();
+        uartLoggerStop();
+        if (uartLoggerEnabled()) {
+            flashfsEraseCompletely();
+        } else {
+            blackboxEraseAll();
+        }
 
         break;
 #endif

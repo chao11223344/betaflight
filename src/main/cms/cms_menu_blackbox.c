@@ -36,6 +36,7 @@
 
 #include "blackbox/blackbox.h"
 #include "blackbox/blackbox_io.h"
+#include "io/uart_logger.h"
 
 #include "cms/cms.h"
 #include "cms/cms_types.h"
@@ -176,6 +177,7 @@ static const void *cmsx_EraseFlash(displayPort_t *pDisplay, const void *ptr)
     displayWrite(pDisplay, 5, 3, DISPLAYPORT_SEVERITY_INFO, "ERASING FLASH...");
     displayRedraw(pDisplay);
 
+    uartLoggerStop();
     flashfsEraseCompletely();
     while (!flashfsIsReady()) {
         flashfsEraseAsync();

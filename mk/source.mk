@@ -56,6 +56,7 @@ PG_SRC = \
             pg/vtx_table.c
 
 COMMON_SRC = \
+            io/uart_logger.c \
             build/build_config.c \
             build/debug.c \
             build/version.c \

@@ -44,6 +44,7 @@
 
 #include "blackbox.h"
 #include "blackbox_io.h"
+#include "io/uart_logger.h"
 
 #include "common/maths.h"
 
@@ -404,6 +405,7 @@ bool blackboxDeviceOpen(void)
 #ifdef USE_FLASHFS
 void blackboxEraseAll(void)
 {
+    uartLoggerStop();
     switch (blackboxConfig()->device) {
     case BLACKBOX_DEVICE_FLASH:
         /* Stop the recorder as if blackbox_mode = ALWAYS it will attempt to resume writing after

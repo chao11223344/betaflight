@@ -118,6 +118,7 @@ bool cliMode = false;
 #include "io/dronecan/dronecan_msg.h"
 #include "io/dronecan/dronecan_nodes.h"
 #include "io/flashfs.h"
+#include "io/uart_logger.h"
 #include "io/gimbal.h"
 #include "io/gps.h"
 #include "io/ledstrip.h"
@@ -3311,6 +3312,14 @@ RAM_CODE static void cliFlashInfo(const char *cmdName, char *cmdline)
 #endif // USE_FLASH_CHIP
 
 #if defined(USE_FLASHFS) && defined(USE_FLASH_CHIP)
+static void cliUartLogger(const char *cmdName, char *cmdline)
+{
+    UNUSED(cmdName);
+    UNUSED(cmdline);
+    cliPrintLinef("UART logger: %s, dropped=%u, flash_used=%u",
+        uartLoggerStatus(), uartLoggerDropped(), flashfsGetOffset());
+}
+
 RAM_CODE static void cliFlashErase(const char *cmdName, char *cmdline)
 {
     UNUSED(cmdName);
@@ -8773,6 +8782,9 @@ const clicmd_t cmdTable[] = {
 #ifdef USE_TIMER_MGMT
     CLI_COMMAND_DEF("timer", "show/set timers", "<> | <pin> list | <pin> [af<alternate function>|none|<option(deprecated)>] | list | show", cliTimer),
 #endif
+#if defined(USE_FLASHFS) && defined(USE_FLASH_CHIP)
+    CLI_COMMAND_DEF("uartlog", "show raw UART recorder status (CLI entry stops recording)", NULL, cliUartLogger),
+#endif
     CLI_COMMAND_DEF("version", "show version", NULL, cliVersion),
 #ifdef USE_VTX_CONTROL
 #ifdef MINIMAL_CLI
@@ -8996,6 +9008,7 @@ static void cliExit(const bool reboot)
 
 void cliEnter(serialPort_t *serialPort, bool interactive)
 {
+    uartLoggerStop();
     cliMode = true;
     cliInteractive = interactive;
     cliPort = serialPort;

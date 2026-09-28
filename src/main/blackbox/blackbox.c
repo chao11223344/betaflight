@@ -24,6 +24,7 @@
 #include <math.h>
 
 #include "platform.h"
+#include "io/uart_logger.h"
 
 #ifdef USE_BLACKBOX
 
@@ -2102,6 +2103,9 @@ STATIC_UNIT_TESTED void blackboxLogIteration(timeUs_t currentTimeUs)
  */
 void blackboxUpdate(timeUs_t currentTimeUs)
 {
+    if (uartLoggerEnabled()) {
+        return;
+    }
     static blackboxState_e cacheFlushNextState;
 
     switch (blackboxState) {

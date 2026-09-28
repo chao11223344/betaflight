@@ -103,6 +103,7 @@
 #include "pg/osd_nav_map.h"
 #include "pg/pg.h"
 #include "pg/pg_ids.h"
+#include "io/uart_logger.h"
 #include "pg/pilot.h"
 #include "pg/pinio.h"
 #include "pg/piniobox.h"
@@ -991,6 +992,12 @@ const clivalue_t valueTable[] = {
 #endif
 
 // PG_MOTOR_CONFIG
+#ifdef USE_FLASHFS
+    { "uart_logger_uart", VAR_INT8 | MASTER_VALUE | MODE_LOOKUP_IDENTIFIER, .config.identifier = { IDENTIFIER_LOOKUP_SERIAL_PORT }, PG_UART_LOGGER_CONFIG, offsetof(uartLoggerConfig_t, uart) },
+    { "uart_logger_baud", VAR_UINT32 | MASTER_VALUE, .config.u32Max = 250000, PG_UART_LOGGER_CONFIG, offsetof(uartLoggerConfig_t, baud) },
+    { "uart_logger_parity", VAR_UINT8 | MASTER_VALUE, .config.minmaxUnsigned = { 0, 1 }, PG_UART_LOGGER_CONFIG, offsetof(uartLoggerConfig_t, parity) },
+    { "uart_logger_stop_bits", VAR_UINT8 | MASTER_VALUE, .config.minmaxUnsigned = { 1, 2 }, PG_UART_LOGGER_CONFIG, offsetof(uartLoggerConfig_t, stopBits) },
+#endif
     { "max_throttle",               VAR_UINT16 | MASTER_VALUE, .config.minmaxUnsigned = { PWM_PULSE_MIN, PWM_PULSE_MAX }, PG_MOTOR_CONFIG, offsetof(motorConfig_t, maxthrottle) },
     { "min_command",                VAR_UINT16 | MASTER_VALUE, .config.minmaxUnsigned = { PWM_PULSE_MIN, PWM_PULSE_MAX }, PG_MOTOR_CONFIG, offsetof(motorConfig_t, mincommand) },
     { "motor_kv",                   VAR_UINT16 | HARDWARE_VALUE, .config.minmaxUnsigned = { 1, 40000 },                   PG_MOTOR_CONFIG, offsetof(motorConfig_t, kv) },

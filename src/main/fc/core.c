@@ -25,6 +25,7 @@
 #include <math.h>
 
 #include "platform.h"
+#include "io/uart_logger.h"
 
 #include "blackbox/blackbox.h"
 #include "blackbox/blackbox_fielddefs.h"
@@ -568,6 +569,9 @@ void disarm(flightLogDisarmReason_e reason)
 
 void tryArm(void)
 {
+    if (uartLoggerEnabled()) {
+        return;
+    }
     if (armingConfig()->gyro_cal_on_first_arm) {
         gyroStartCalibration(true);
     }

@@ -30,6 +30,7 @@
 
 #include "io/serial.h"
 #include "io/serial_feature_map.h"
+#include "io/uart_logger.h"
 
 #include "msp/msp_serial.h"
 #include "pg/msp.h"
@@ -150,6 +151,11 @@ uint32_t serialSynthesizeFunctionMask(serialPortIdentifier_e identifier)
     }
 
     uint32_t mask = 0;
+#ifdef USE_FLASHFS
+    if (uartLoggerConfig()->uart == identifier) {
+        mask |= FUNCTION_UART_LOGGER;
+    }
+#endif
 
     for (unsigned i = 0; i < MAX_MSP_PORT_COUNT; i++) {
         if (mspConfig()->msp_uart[i] == identifier) {
@@ -245,6 +251,11 @@ unsigned serialGetPortClaims(serialPortIdentifier_e identifier, serialPortClaim_
     } while (0)
 
     static const char * const mspClaimNames[] = { "msp_1", "msp_2", "msp_3" };
+#ifdef USE_FLASHFS
+    if (uartLoggerConfig()->uart == identifier) {
+        ADD_CLAIM("uart_logger", "uart_logger_uart", NULL, "uart_logger_baud", FUNCTION_UART_LOGGER);
+    }
+#endif
     static const char * const mspClaimSettings[] = { "msp_1_uart", "msp_2_uart", "msp_3_uart" };
     static const char * const mspClaimBaudSettings[] = { "msp_1_baud", "msp_2_baud", "msp_3_baud" };
     for (unsigned i = 0; i < MAX_MSP_PORT_COUNT && i < ARRAYLEN(mspClaimNames); i++) {
@@ -348,6 +359,11 @@ unsigned serialGetPortClaims(serialPortIdentifier_e identifier, serialPortClaim_
 // take away the link the board is being configured over.
 static void clearClaimsOnPort(serialPortIdentifier_e identifier, bool keepMsp)
 {
+#ifdef USE_FLASHFS
+    if (uartLoggerConfig()->uart == identifier) {
+        uartLoggerConfigMutable()->uart = SERIAL_PORT_NONE;
+    }
+#endif
     if (!keepMsp) {
         for (unsigned i = 0; i < MAX_MSP_PORT_COUNT; i++) {
             if (mspConfig()->msp_uart[i] == identifier) {
@@ -524,6 +540,11 @@ bool serialApplyFunctionMask(serialPortIdentifier_e identifier, uint32_t mask)
     }
 
     clearClaimsOnPort(identifier, false);
+#ifdef USE_FLASHFS
+    if (mask & FUNCTION_UART_LOGGER) {
+        uartLoggerConfigMutable()->uart = identifier;
+    }
+#endif
 
     if (mask & FUNCTION_MSP) {
         for (unsigned i = 0; i < MAX_MSP_PORT_COUNT; i++) {
@@ -821,4 +842,3 @@ void serialResetFeatureAssignments(void)
     mspConfigMutable()->msp_uart[0] = serialPortIdentifiers[0];
     mspConfigMutable()->msp_baud[0] = serialDefaultPortBaud(SERIAL_BAUD_MSP);
 }
-
