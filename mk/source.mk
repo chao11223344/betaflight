@@ -57,6 +57,7 @@ PG_SRC = \
 
 COMMON_SRC = \
             io/uart_logger.c \
+            msc/uart_logger_files.c \
             build/build_config.c \
             build/debug.c \
             build/version.c \

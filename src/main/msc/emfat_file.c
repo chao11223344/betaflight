@@ -25,6 +25,7 @@
 #include "platform.h"
 #include "emfat.h"
 #include "emfat_file.h"
+#include "msc/uart_logger_files.h"
 
 #include "common/printf.h"
 #include "common/strtol.h"
@@ -253,6 +254,31 @@ static void bblog_read_proc(uint8_t *dest, int size, uint32_t offset, emfat_entr
     flashfsReadAbs(offset, dest, size);
 }
 
+#ifdef USE_FLASHFS
+static void uart_raw_read_proc(uint8_t *dest, int size, uint32_t offset, emfat_entry_t *entry)
+{
+    UNUSED(entry);
+    uartLoggerReadRaw(dest, size, offset);
+}
+
+static void uart_status_read_proc(uint8_t *dest, int size, uint32_t offset, emfat_entry_t *entry)
+{
+    memset(dest, 0, size);
+    if (offset < entry->curr_size) {
+        memcpy(dest, uartLoggerFileStatus() + offset, MIN((unsigned)size, entry->curr_size - offset));
+    }
+}
+
+static void uart_add_file(emfat_entry_t *entry, const char *name, uint32_t size, emfat_readcb_t callback)
+{
+    entry->name = name;
+    entry->level = 1;
+    entry->attr = ATTR_READ;
+    entry->curr_size = entry->max_size = size;
+    entry->readcb = callback;
+}
+#endif
+
 static const emfat_entry_t entriesPredefined[] =
 {
     // name           dir    attr         lvl offset  size             max_size        user                time  read               write
@@ -438,7 +464,18 @@ void emfat_init_files(void)
     flashfsUsedSpace = flashfsIdentifyStartOfFreeSpace();
 
     // Detect and create entries for each individual log
-    const int logCount = emfat_find_log(&entries[PREDEFINED_ENTRY_COUNT], EMFAT_MAX_LOG_ENTRY, flashfsUsedSpace);
+    const bool uartCapture = uartLoggerFilesInit();
+    int logCount = 0;
+    if (uartCapture) {
+        uart_add_file(&entries[entryIndex++], "CAPTURE.BIN", uartLoggerFileSize(true), uart_raw_read_proc);
+        uart_add_file(&entries[entryIndex++], "CAPTURE.ULG", uartLoggerFileSize(false), bblog_read_proc);
+        uart_add_file(&entries[entryIndex++], "STATUS.TXT", strlen(uartLoggerFileStatus()), uart_status_read_proc);
+        for (int i = PREDEFINED_ENTRY_COUNT; i < entryIndex; i++) {
+            emfat_set_entry_cma(&entries[i]);
+        }
+    } else {
+        logCount = emfat_find_log(&entries[PREDEFINED_ENTRY_COUNT], EMFAT_MAX_LOG_ENTRY, flashfsUsedSpace);
+    }
 
     entryIndex += logCount;
 

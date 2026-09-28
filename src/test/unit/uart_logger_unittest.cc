@@ -9,6 +9,7 @@ extern "C" {
 #include "common/crc.h"
 #include "io/serial.h"
 #include "io/uart_logger.h"
+#include "msc/uart_logger_files.h"
 #include "pg/serial_uart.h"
 #include "pg/pg_ids.h"
 }
@@ -27,6 +28,13 @@ bool flashfsIsSupported(void) { return true; }
 bool flashfsIsReady(void) { return true; }
 uint32_t flashfsGetOffset(void) { return stored.size() + pending.size(); }
 uint32_t flashfsGetSize(void) { return capacity; }
+int flashfsReadAbs(uint32_t offset, uint8_t *dest, unsigned length)
+{
+    if (offset >= stored.size()) return 0;
+    length = std::min<unsigned>(length, stored.size() - offset);
+    memcpy(dest, stored.data() + offset, length);
+    return length;
+}
 uint32_t flashfsGetWriteBufferFreeSpace(void) { return 127 - pending.size(); }
 bool flashfsFlushAsync(bool)
 {
@@ -145,4 +153,57 @@ TEST_F(UartLoggerTest, ErasedLookingInputKeepsBootScanMarkers)
     const auto bytes = payload();
     EXPECT_EQ(3000u, bytes.size());
     EXPECT_TRUE(std::all_of(bytes.begin(), bytes.end(), [](uint8_t b) { return b == 255; }));
+}
+
+TEST_F(UartLoggerTest, UsbFilesExportExactBytesWithRandomReadsAndPadding)
+{
+    capacity = 262144;
+    uartLoggerInit();
+    std::vector<uint8_t> expected;
+    for (unsigned i = 0; i < 300; i++) {
+        send(241);
+        for (unsigned b = 0; b < 241; b++) expected.push_back(b);
+        for (unsigned tick = 0; tick < 24; tick++) uartLoggerUpdate();
+    }
+    uartLoggerStop();
+    const auto logSize = stored.size();
+    stored.resize(stored.size() + 512, 255);
+    ASSERT_TRUE(uartLoggerFilesInit());
+    EXPECT_EQ(expected.size(), uartLoggerFileSize(true));
+    EXPECT_EQ(logSize, uartLoggerFileSize(false));
+    EXPECT_NE(nullptr, strstr(uartLoggerFileStatus(), "complete"));
+    uint8_t result[512];
+    for (unsigned offset : {70000u, 0u, 37000u, 17u, 72000u, 72290u, 100u}) {
+        uartLoggerReadRaw(result, sizeof(result), offset);
+        for (unsigned i = 0; i < sizeof(result); i++) {
+            EXPECT_EQ(offset + i < expected.size() ? expected[offset + i] : 0, result[i]);
+        }
+    }
+}
+
+TEST_F(UartLoggerTest, UsbFilesRecoverVerifiedPrefixOnDamagedTail)
+{
+    uartLoggerInit(); send(100); uartLoggerStop();
+    stored[128 + 16] ^= 1;
+    ASSERT_TRUE(uartLoggerFilesInit());
+    EXPECT_EQ(48u, uartLoggerFileSize(true));
+    EXPECT_EQ(stored.size(), uartLoggerFileSize(false));
+    EXPECT_NE(nullptr, strstr(uartLoggerFileStatus(), "INCOMPLETE"));
+    stored[60] ^= 1;
+    ASSERT_TRUE(uartLoggerFilesInit());
+    EXPECT_EQ(0u, uartLoggerFileSize(true));
+    stored[0] = 0;
+    EXPECT_FALSE(uartLoggerFilesInit());
+}
+
+TEST_F(UartLoggerTest, UsbFilesHandleEmptyAndTruncatedCaptures)
+{
+    uartLoggerInit(); uartLoggerStop();
+    ASSERT_TRUE(uartLoggerFilesInit());
+    EXPECT_EQ(0u, uartLoggerFileSize(true));
+    EXPECT_NE(nullptr, strstr(uartLoggerFileStatus(), "complete"));
+    stored.resize(80);
+    ASSERT_TRUE(uartLoggerFilesInit());
+    EXPECT_EQ(0u, uartLoggerFileSize(true));
+    EXPECT_NE(nullptr, strstr(uartLoggerFileStatus(), "INCOMPLETE"));
 }

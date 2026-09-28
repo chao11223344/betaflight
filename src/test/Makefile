@@ -171,9 +171,12 @@ battery_profile_unittest_SRC := \
 
 uart_logger_unittest_SRC := \
         $(USER_DIR)/io/uart_logger.c \
+        $(USER_DIR)/msc/uart_logger_files.c \
+        $(USER_DIR)/common/printf.c \
+        $(USER_DIR)/common/typeconversion.c \
         $(USER_DIR)/common/crc.c \
         $(USER_DIR)/common/streambuf.c
-uart_logger_unittest_DEFINES := USE_FLASHFS=
+uart_logger_unittest_DEFINES := USE_FLASHFS= USE_USB_MSC=
 
 blackbox_unittest_SRC :=  \
 		$(USER_DIR)/blackbox/blackbox.c \

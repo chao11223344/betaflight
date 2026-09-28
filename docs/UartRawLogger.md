@@ -54,7 +54,31 @@ status, dropped bytes, and Flash bytes used. Reading Flash through MSP also
 stops acquisition and flushes it before replying. Merely querying the MSP Flash
 summary does not stop recording.
 
-Close Configurator so it releases the USB serial port. Use the included tool:
+### USB Disk (Recommended)
+
+With the updated HSRCF722_8C firmware, no Python or download script is needed:
+
+1. Connect USB and open the Configurator CLI.
+2. Enter `msc`. The board flushes the recorder and restarts in USB disk mode.
+3. Open the `BETAFLT` disk in Windows Explorer (or your OS file manager).
+4. Copy `CAPTURE.BIN` to the computer. It contains the original UART bytes.
+
+The Configurator's "Activate mass storage device mode" action on the Blackbox
+page can also be used when available. Keep `blackbox_device = SPIFLASH` for this
+workflow (the HSRCF722_8C board default). The board remains in disk mode while
+connected; unplug and reconnect after copying to return to normal operation.
+
+The read-only disk also contains `CAPTURE.ULG` (full log with timestamps and
+checksums) and `STATUS.TXT` (capture completeness and dropped-byte count). A
+damaged or interrupted capture exports only the verified prefix as `.BIN` and
+reports INCOMPLETE in the status file. The disk is scanned before USB enumeration,
+so a large capture can take time to appear. Copying or deleting files on the
+virtual disk does not erase the onboard log. No automatic USB disk switch occurs
+when merely plugging in the cable, so configuration remains accessible.
+
+### Optional MSP Download And Timestamp Export
+
+For automation, close Configurator and use the included tool:
 
 ```sh
 python3 -m pip install pyserial
@@ -67,7 +91,8 @@ stops the logger with an initial Flash read, then queries the final stored lengt
 The exporter writes exact captured payload bytes to `capture.bin` and block
 timestamps, offsets, and drop counters to `capture.bin.json`. Output paths must
 not already exist. These are custom logs, not Blackbox `.bbl` files; Blackbox
-Explorer and the existing MSC virtual log-file view are not supported.
+Explorer is not supported. The same exporter accepts `CAPTURE.ULG` copied from
+the USB disk when block timestamps are needed.
 
 To capture again, enter CLI, run `flash_erase`, then `save`. Erasing does not
 automatically resume acquisition. Reboot preserves an existing log and refuses

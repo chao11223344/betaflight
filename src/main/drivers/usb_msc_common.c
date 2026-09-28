@@ -28,6 +28,7 @@
 #include <string.h>
 
 #include "platform.h"
+#include "io/uart_logger.h"
 
 #if defined(USE_USB_MSC)
 
@@ -140,6 +141,7 @@ void mscWaitForButton(void)
 
 void systemResetToMsc(int timezoneOffsetMinutes)
 {
+    uartLoggerStop();
     persistentObjectWrite(PERSISTENT_OBJECT_RESET_REASON, RESET_MSC_REQUEST);
 
     __disable_irq();
