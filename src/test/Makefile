@@ -171,6 +171,7 @@ battery_profile_unittest_SRC := \
 
 uart_logger_unittest_SRC := \
         $(USER_DIR)/io/uart_logger.c \
+        $(USER_DIR)/io/uart_logger_store.c \
         $(USER_DIR)/msc/uart_logger_files.c \
         $(USER_DIR)/common/printf.c \
         $(USER_DIR)/common/typeconversion.c \

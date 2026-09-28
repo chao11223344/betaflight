@@ -119,6 +119,7 @@ bool cliMode = false;
 #include "io/dronecan/dronecan_nodes.h"
 #include "io/flashfs.h"
 #include "io/uart_logger.h"
+#include "io/uart_logger_store.h"
 #include "io/gimbal.h"
 #include "io/gps.h"
 #include "io/ledstrip.h"
@@ -3316,8 +3317,10 @@ static void cliUartLogger(const char *cmdName, char *cmdline)
 {
     UNUSED(cmdName);
     UNUSED(cmdline);
-    cliPrintLinef("UART logger: %s, dropped=%u, flash_used=%u",
-        uartLoggerStatus(), uartLoggerDropped(), flashfsGetOffset());
+    const unsigned count = uartLogCount();
+    cliPrintLinef("UART logger: %s, sequence=%u, logs=%u, dropped=%u",
+        uartLoggerStatus(), count ? uartLogEntry(count - 1)->sequence : 0,
+        count, uartLoggerDropped());
 }
 
 RAM_CODE static void cliFlashErase(const char *cmdName, char *cmdline)

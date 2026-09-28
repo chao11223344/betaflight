@@ -16,6 +16,7 @@
 #include "io/serial.h"
 #include "io/serial_feature_map.h"
 #include "io/uart_logger.h"
+#include "io/uart_logger_store.h"
 #include "pg/pg_ids.h"
 
 PG_REGISTER_WITH_RESET_TEMPLATE(uartLoggerConfig_t, uartLoggerConfig, PG_UART_LOGGER_CONFIG, 0);
@@ -28,8 +29,8 @@ PG_RESET_TEMPLATE(uartLoggerConfig_t, uartLoggerConfig,
 
 // One interrupt producer and one scheduler consumer. Publish indices last.
 #define RX_SIZE 4096
-#define PAYLOAD_SIZE 48
-#define RECORD_HEADER_SIZE 16
+#define PAYLOAD_SIZE 44
+#define RECORD_HEADER_SIZE 20
 #define RECORD_SIZE 64
 static volatile uint8_t rxBuffer[RX_SIZE];
 static volatile uint32_t rxHead, rxTail, dropped;
@@ -84,12 +85,26 @@ static void writeRecord(uint8_t type, const uint8_t *payload, unsigned length)
     put32(record + 4, micros());
     put32(record + 8, dropped);
     put32(record + 12, 0);
+    put32(record + 16, uartLogEntry(uartLogCount() - 1)->sequence);
     if (length) {
         memcpy(record + RECORD_HEADER_SIZE, payload, length);
     }
     const uint16_t crc = crc16_ccitt_update(0, record, 12);
-    put32(record + 12, crc16_ccitt_update(crc, record + 16, PAYLOAD_SIZE));
+    put32(record + 12, crc16_ccitt_update(crc, record + 16, RECORD_SIZE - 16));
     flashfsWrite(record, sizeof(record), false);
+    uartLogWritten();
+}
+
+static bool beginLog(void)
+{
+    uint8_t header[RECORD_SIZE] = { 'U', 'A', 'R', 'T', 'L', 'O', 'G', 2 };
+    put32(header + 8, uartLoggerConfig()->baud);
+    header[12] = uartLoggerConfig()->uart;
+    header[13] = 8;
+    header[14] = uartLoggerConfig()->parity;
+    header[15] = uartLoggerConfig()->stopBits;
+    put32(header + 16, micros());
+    return uartLogBegin(header);
 }
 
 void uartLoggerInit(void)
@@ -115,10 +130,8 @@ void uartLoggerInit(void)
         serialSynthesizeFunctionMask(port) != FUNCTION_UART_LOGGER) {
         return;
     }
-    // Never append a different format to an existing Blackbox or prior capture.
-    // A new capture requires an explicit erase, so reboot cannot overwrite it.
-    status = "erase required";
-    if (flashfsGetOffset() != 0 || flashfsGetSize() < 2 * RECORD_SIZE) {
+    status = "unsupported or damaged storage; export logs before erasing";
+    if (!uartLogScan()) {
         return;
     }
     status = "UART unavailable";
@@ -152,17 +165,12 @@ void uartLoggerInit(void)
         loggerPort = NULL;
         return;
     }
-    // Every 64-byte record begins with a non-erased marker. This preserves
-    // flashfs boot scanning even when the raw input is entirely 0xff.
-    uint8_t header[RECORD_SIZE] = { 'U', 'A', 'R', 'T', 'L', 'O', 'G', 1 };
-    put32(header + 8, uartLoggerConfig()->baud);
-    header[12] = port;
-    header[13] = 8;
-    header[14] = uartLoggerConfig()->parity;
-    header[15] = uartLoggerConfig()->stopBits;
-    put32(header + 16, micros());
-    put32(header + 60, crc16_ccitt_update(0, header, 60));
-    flashfsWrite(header, sizeof(header), false);
+    if (!beginLog()) {
+        closeSerialPort(loggerPort);
+        loggerPort = NULL;
+        status = "log sequence exhausted";
+        return;
+    }
     ownsFlash = true;
     active = true;
     lastRecordTime = micros();
@@ -176,12 +184,21 @@ static bool drain(void)
         return false;
     }
     const unsigned length = count < PAYLOAD_SIZE ? count : PAYLOAD_SIZE;
-    // Reserve space for a final record, even when the flash fills.
-    if (flashfsGetSize() - flashfsGetOffset() < 2 * RECORD_SIZE) {
-        active = false;
-        status = "full";
-        return false;
+    // Close the current segment before the ring wraps, keeping a durable
+    // newest header intact while the following segment is being allocated.
+    if (uartLogRemaining() < 2 * RECORD_SIZE) {
+        while (!flashfsFlushAsync(true)) flashfsFlushSync();
+        if (uartLogRemaining() >= RECORD_SIZE && uartLogPrepareWrite()) {
+            writeRecord(2, NULL, 0);
+        }
+        uartLogFlush();
+        if (!beginLog()) {
+            active = false;
+            status = "log sequence exhausted";
+            return false;
+        }
     }
+    if (!uartLogPrepareWrite()) return false;
     if (flashfsGetWriteBufferFreeSpace() < RECORD_SIZE) {
         return false;
     }
@@ -220,13 +237,13 @@ void uartLoggerStop(void)
     const uint32_t pending = (rxHead + RX_SIZE - rxTail) % RX_SIZE;
     dropped = UINT32_MAX - dropped < pending ? UINT32_MAX : dropped + pending;
     rxTail = rxHead;
-    if (flashfsGetSize() - flashfsGetOffset() >= RECORD_SIZE) {
+    if (uartLogRemaining() >= RECORD_SIZE && uartLogPrepareWrite()) {
         writeRecord(2, NULL, 0);
     }
     while (!flashfsFlushAsync(true)) {
         flashfsFlushSync();
     }
-    while (!flashfsIsReady()) {}
+    uartLogFlush();
     ownsFlash = false;
 }
 

@@ -15,16 +15,22 @@ MAGIC = b"UARTLOG\x01"
 
 
 def decode(data):
-    if len(data) < BLOCK_SIZE or data[:8] != MAGIC:
-        raise ValueError("Not a UARTLOG version 1 capture")
+    if len(data) < BLOCK_SIZE or data[:7] != b"UARTLOG" or data[7] not in (1, 2):
+        raise ValueError("Not a supported UARTLOG capture")
     if struct.unpack_from("<I", data, 60)[0] != binascii.crc_hqx(data[:60], 0):
         raise ValueError("Invalid capture header checksum")
     baud, uart, bits, parity, stops, started = struct.unpack_from("<IBBBBI", data, 8)
     metadata = dict(baud=baud, uart=uart, data_bits=bits, parity=parity,
                     stop_bits=stops, started_us=started, complete=False,
                     dropped=0, records=[])
+    data_offset = BLOCK_SIZE
+    if data[7] == 2:
+        sequence, data_offset = struct.unpack_from("<II", data, 20)
+        if data_offset < BLOCK_SIZE or data_offset % BLOCK_SIZE or data_offset > len(data):
+            raise ValueError("Invalid version 2 payload offset")
+        metadata["sequence"] = sequence
     payload = bytearray()
-    for offset in range(BLOCK_SIZE, len(data), BLOCK_SIZE):
+    for offset in range(data_offset, len(data), BLOCK_SIZE):
         block = data[offset:offset + BLOCK_SIZE]
         if block == b"\xff" * len(block):
             break
@@ -39,13 +45,19 @@ def decode(data):
         if (kind == 2 and length != 0) or (kind == 1 and length == 0):
             metadata["warning"] = f"Invalid block length at {offset}"
             break
+        payload_offset = 16
+        if data[7] == 2:
+            if length > 44 or struct.unpack_from("<I", block, 16)[0] != metadata["sequence"]:
+                metadata["warning"] = f"Wrong session at {offset}"
+                break
+            payload_offset = 20
         metadata["dropped"] = dropped
         metadata["records"].append(dict(offset=len(payload), length=length,
                                           timestamp_us=timestamp, dropped=dropped))
         if kind == 2:
             metadata["complete"] = True
             break
-        payload.extend(block[16:16 + length])
+        payload.extend(block[payload_offset:payload_offset + length])
     metadata["bytes"] = len(payload)
     return bytes(payload), metadata
 
@@ -111,6 +123,8 @@ def download(port_name, destination):
         # First read stops capture and drains the firmware queue. Query used
         # length only afterwards, otherwise the last buffered bytes are omitted.
         first = client.read_flash(0, BLOCK_SIZE)
+        if first[:8] == b"UARTLOG\x02":
+            raise ValueError("Circular multi-log captures: use USB disk mode (CLI: msc) and copy numbered .BIN/.ULG files")
         if first[:8] != MAGIC:
             raise ValueError("Flash does not contain a UARTLOG capture")
         summary = client.request(70)

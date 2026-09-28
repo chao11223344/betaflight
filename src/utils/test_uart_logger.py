@@ -14,16 +14,31 @@ def header():
     return bytes(data)
 
 
-def record(payload=b"", kind=1, dropped=0):
+def record(payload=b"", kind=1, dropped=0, sequence=None):
     data = bytearray(64)
     struct.pack_into("<2sBBIII", data, 0, b"UL", kind, len(payload), 200, dropped, 0)
-    data[16:16 + len(payload)] = payload
+    start = 16 if sequence is None else 20
+    data[start:start + len(payload)] = payload
+    if sequence is not None:
+        struct.pack_into("<I", data, 16, sequence)
     crc = binascii.crc_hqx(data[16:], binascii.crc_hqx(data[:12], 0))
     struct.pack_into("<I", data, 12, crc)
     return bytes(data)
 
 
 class CaptureTest(unittest.TestCase):
+    def test_numbered_page_aligned_capture(self):
+        data = bytearray(header())
+        data[7] = 2
+        struct.pack_into("<II", data, 20, 12345, 2048)
+        struct.pack_into("<I", data, 60, binascii.crc_hqx(data[:60], 0))
+        raw, metadata = decode(bytes(data) + bytes(2048 - 64) + record(b"abc", sequence=12345) + record(kind=2, sequence=12345))
+        self.assertEqual(b"abc", raw)
+        self.assertEqual(12345, metadata["sequence"])
+        self.assertTrue(metadata["complete"])
+        with self.assertRaises(ValueError):
+            decode(bytes(data))
+
     def test_binary_roundtrip_and_erased_padding(self):
         raw = bytes(range(256))
         blocks = b"".join(record(raw[i:i + 48]) for i in range(0, len(raw), 48))

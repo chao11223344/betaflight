@@ -26,6 +26,7 @@
 #include "emfat.h"
 #include "emfat_file.h"
 #include "msc/uart_logger_files.h"
+#include "io/uart_logger_store.h"
 
 #include "common/printf.h"
 #include "common/strtol.h"
@@ -257,8 +258,12 @@ static void bblog_read_proc(uint8_t *dest, int size, uint32_t offset, emfat_entr
 #ifdef USE_FLASHFS
 static void uart_raw_read_proc(uint8_t *dest, int size, uint32_t offset, emfat_entry_t *entry)
 {
-    UNUSED(entry);
-    uartLoggerReadRaw(dest, size, offset);
+    uartLoggerReadRaw(entry->user_data, dest, size, offset);
+}
+
+static void uart_log_read_proc(uint8_t *dest, int size, uint32_t offset, emfat_entry_t *entry)
+{
+    uartLoggerReadLog(entry->user_data, dest, size, offset);
 }
 
 static void uart_status_read_proc(uint8_t *dest, int size, uint32_t offset, emfat_entry_t *entry)
@@ -301,6 +306,8 @@ static const emfat_entry_t entriesPredefined[] =
 
 #define EMFAT_MAX_LOG_ENTRY 100
 #define EMFAT_MAX_ENTRY (PREDEFINED_ENTRY_COUNT + EMFAT_MAX_LOG_ENTRY + APPENDED_ENTRY_COUNT)
+
+STATIC_ASSERT(UART_LOGGER_MAX_LOGS * 2 + 1 <= EMFAT_MAX_LOG_ENTRY, uart_logger_entries_fit);
 
 static emfat_entry_t entries[EMFAT_MAX_ENTRY];
 
@@ -467,8 +474,17 @@ void emfat_init_files(void)
     const bool uartCapture = uartLoggerFilesInit();
     int logCount = 0;
     if (uartCapture) {
-        uart_add_file(&entries[entryIndex++], "CAPTURE.BIN", uartLoggerFileSize(true), uart_raw_read_proc);
-        uart_add_file(&entries[entryIndex++], "CAPTURE.ULG", uartLoggerFileSize(false), bblog_read_proc);
+        static char names[UART_LOGGER_MAX_LOGS][2][13];
+        flashfsUsedSpace = 0;
+        for (unsigned i = 0; i < uartLogCount(); i++) {
+            tfp_sprintf(names[i][0], "%08u.BIN", uartLogEntry(i)->sequence);
+            tfp_sprintf(names[i][1], "%08u.ULG", uartLogEntry(i)->sequence);
+            uart_add_file(&entries[entryIndex], names[i][0], uartLoggerFileSize(i, true), uart_raw_read_proc);
+            entries[entryIndex++].user_data = i;
+            uart_add_file(&entries[entryIndex], names[i][1], uartLoggerFileSize(i, false), uart_log_read_proc);
+            entries[entryIndex++].user_data = i;
+            flashfsUsedSpace += uartLoggerFileSize(i, false);
+        }
         uart_add_file(&entries[entryIndex++], "STATUS.TXT", strlen(uartLoggerFileStatus()), uart_status_read_proc);
         for (int i = PREDEFINED_ENTRY_COUNT; i < entryIndex; i++) {
             emfat_set_entry_cma(&entries[i]);
