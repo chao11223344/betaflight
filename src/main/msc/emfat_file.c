@@ -481,8 +481,12 @@ void emfat_init_files(void)
             tfp_sprintf(names[i][1], "%08u.ULG", uartLogEntry(i)->sequence);
             uart_add_file(&entries[entryIndex], names[i][0], uartLoggerFileSize(i, true), uart_raw_read_proc);
             entries[entryIndex++].user_data = i;
-            uart_add_file(&entries[entryIndex], names[i][1], uartLoggerFileSize(i, false), uart_log_read_proc);
-            entries[entryIndex++].user_data = i;
+            // New captures expose only plain bytes. Keep legacy ULG files
+            // downloadable so upgrading never strands timestamped captures.
+            if (uartLogEntry(i)->version < 3) {
+                uart_add_file(&entries[entryIndex], names[i][1], uartLoggerFileSize(i, false), uart_log_read_proc);
+                entries[entryIndex++].user_data = i;
+            }
             flashfsUsedSpace += uartLoggerFileSize(i, false);
         }
         uart_add_file(&entries[entryIndex++], "STATUS.TXT", strlen(uartLoggerFileStatus()), uart_status_read_proc);

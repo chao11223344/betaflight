@@ -78,6 +78,21 @@ void uartLoggerReadRaw(unsigned index, uint8_t *dest, unsigned size, uint32_t of
     memset(dest, 0, size);
     const uartLogEntry_t *log = uartLogEntry(index);
     if (!log || offset >= log->rawSize) return;
+    if (log->version == 3) {
+        const unsigned capacity = log->pageSize - UART_LOGGER_PAGE_METADATA;
+        size = MIN(size, log->rawSize - offset);
+        while (size) {
+            const unsigned skip = offset % capacity;
+            const unsigned length = MIN(size, capacity - skip);
+            const uint32_t address = log->start + log->dataOffset + (offset / capacity) * log->pageSize;
+            if (flashfsReadAbs(address, buffer, log->pageSize) != (int)log->pageSize || !uartLogValidPage(buffer, log)) return;
+            memcpy(dest, buffer + skip, length);
+            dest += length;
+            offset += length;
+            size -= length;
+        }
+        return;
+    }
     if (selectedLog != index) selectLog(index);
     size = MIN(size, log->rawSize - offset);
     if (cursorRaw > offset) {

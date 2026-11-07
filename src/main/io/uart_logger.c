@@ -29,15 +29,15 @@ PG_RESET_TEMPLATE(uartLoggerConfig_t, uartLoggerConfig,
 
 // One interrupt producer and one scheduler consumer. Publish indices last.
 #define RX_SIZE 4096
-#define PAYLOAD_SIZE 44
-#define RECORD_HEADER_SIZE 20
 #define RECORD_SIZE 64
 static volatile uint8_t rxBuffer[RX_SIZE];
 static volatile uint32_t rxHead, rxTail, dropped;
 static serialPort_t *loggerPort;
 static volatile bool active;
 static bool ownsFlash;
-static timeUs_t lastRecordTime;
+static uint8_t page[UART_LOGGER_MAX_PAGE_SIZE];
+static unsigned payloadLength, pageSent;
+static bool pageReady, pageEndsLog, sealed;
 static const char *status = "disabled";
 
 const char *uartLoggerStatus(void)
@@ -79,32 +79,18 @@ static void receive(uint16_t data, void *context)
     rxHead = next;
 }
 
-static void writeRecord(uint8_t type, const uint8_t *payload, unsigned length)
-{
-    uint8_t record[RECORD_HEADER_SIZE + PAYLOAD_SIZE] = { 'U', 'L', type, length };
-    put32(record + 4, micros());
-    put32(record + 8, dropped);
-    put32(record + 12, 0);
-    put32(record + 16, uartLogEntry(uartLogCount() - 1)->sequence);
-    if (length) {
-        memcpy(record + RECORD_HEADER_SIZE, payload, length);
-    }
-    const uint16_t crc = crc16_ccitt_update(0, record, 12);
-    put32(record + 12, crc16_ccitt_update(crc, record + 16, RECORD_SIZE - 16));
-    flashfsWrite(record, sizeof(record), false);
-    uartLogWritten();
-}
-
 static bool beginLog(void)
 {
-    uint8_t header[RECORD_SIZE] = { 'U', 'A', 'R', 'T', 'L', 'O', 'G', 2 };
+    uint8_t header[RECORD_SIZE] = { 'U', 'A', 'R', 'T', 'L', 'O', 'G', 3 };
     put32(header + 8, uartLoggerConfig()->baud);
     header[12] = uartLoggerConfig()->uart;
     header[13] = 8;
     header[14] = uartLoggerConfig()->parity;
     header[15] = uartLoggerConfig()->stopBits;
-    put32(header + 16, micros());
-    return uartLogBegin(header);
+    if (!uartLogBegin(header)) return false;
+    payloadLength = pageSent = 0;
+    pageReady = pageEndsLog = sealed = false;
+    return true;
 }
 
 void uartLoggerInit(void)
@@ -173,24 +159,17 @@ void uartLoggerInit(void)
     }
     ownsFlash = true;
     active = true;
-    lastRecordTime = micros();
     status = "recording";
 }
 
-static bool drain(void)
+// Assemble an entire physical page before programming it. Sparse input stays
+// in RAM instead of creating padded records every 10 ms. Stop seals a partial
+// page; full pages carry only a 16-byte recovery footer, with no timestamps.
+static bool drain(bool finish)
 {
-    const unsigned count = (rxHead + RX_SIZE - rxTail) % RX_SIZE;
-    if (!count) {
-        return false;
-    }
-    const unsigned length = count < PAYLOAD_SIZE ? count : PAYLOAD_SIZE;
-    // Close the current segment before the ring wraps, keeping a durable
-    // newest header intact while the following segment is being allocated.
-    if (uartLogRemaining() < 2 * RECORD_SIZE) {
-        while (!flashfsFlushAsync(true)) flashfsFlushSync();
-        if (uartLogRemaining() >= RECORD_SIZE && uartLogPrepareWrite()) {
-            writeRecord(2, NULL, 0);
-        }
+    unsigned count = (rxHead + RX_SIZE - rxTail) % RX_SIZE;
+    if (sealed) {
+        if (!count) return false;
         uartLogFlush();
         if (!beginLog()) {
             active = false;
@@ -198,17 +177,37 @@ static bool drain(void)
             return false;
         }
     }
+    const unsigned size = uartLogPageSize();
+    const unsigned capacity = size - UART_LOGGER_PAGE_METADATA;
+    if (!pageReady) {
+        while (count && payloadLength < capacity) {
+            page[payloadLength++] = rxBuffer[rxTail];
+            rxTail = (rxTail + 1) % RX_SIZE;
+            count--;
+        }
+        if (payloadLength < capacity && !finish) return false;
+        pageEndsLog = (finish && !count) || uartLogRemaining() == size;
+        memset(page + payloadLength, 0, size - payloadLength);
+        uint8_t *meta = page + capacity;
+        meta[0] = 'U';
+        meta[1] = 'R';
+        meta[2] = payloadLength;
+        meta[3] = (payloadLength >> 8) | (pageEndsLog ? 0x80 : 0);
+        put32(meta + 4, uartLogEntry(uartLogCount() - 1)->sequence);
+        put32(meta + 8, dropped);
+        put32(meta + 12, crc16_ccitt_update(0, page, size - 4));
+        pageReady = true;
+    }
+    if (flashfsGetWriteBufferFreeSpace() < RECORD_SIZE) return false;
     if (!uartLogPrepareWrite()) return false;
-    if (flashfsGetWriteBufferFreeSpace() < RECORD_SIZE) {
-        return false;
+    flashfsWrite(page + pageSent, RECORD_SIZE, false);
+    pageSent += RECORD_SIZE;
+    if (pageSent == size) {
+        uartLogWritten();
+        sealed = pageEndsLog;
+        pageReady = false;
+        payloadLength = pageSent = 0;
     }
-    uint8_t payload[PAYLOAD_SIZE];
-    for (unsigned i = 0; i < length; i++) {
-        payload[i] = rxBuffer[rxTail];
-        rxTail = (rxTail + 1) % RX_SIZE;
-    }
-    writeRecord(1, payload, length);
-    lastRecordTime = micros();
     return true;
 }
 
@@ -229,7 +228,7 @@ void uartLoggerStop(void)
     while (!flashfsFlushAsync(true)) {
         flashfsFlushSync();
     }
-    while (drain()) {
+    while (drain(true)) {
         while (!flashfsFlushAsync(true)) {
             flashfsFlushSync();
         }
@@ -237,9 +236,6 @@ void uartLoggerStop(void)
     const uint32_t pending = (rxHead + RX_SIZE - rxTail) % RX_SIZE;
     dropped = UINT32_MAX - dropped < pending ? UINT32_MAX : dropped + pending;
     rxTail = rxHead;
-    if (uartLogRemaining() >= RECORD_SIZE && uartLogPrepareWrite()) {
-        writeRecord(2, NULL, 0);
-    }
     while (!flashfsFlushAsync(true)) {
         flashfsFlushSync();
     }
@@ -253,10 +249,7 @@ void uartLoggerUpdate(void)
         return;
     }
     flashfsFlushAsync(true);
-    const unsigned count = (rxHead + RX_SIZE - rxTail) % RX_SIZE;
-    if (count >= PAYLOAD_SIZE || (timeUs_t)(micros() - lastRecordTime) >= 10000) {
-        drain();
-    }
+    drain(false);
     if (!active) {
         uartLoggerStop();
     }

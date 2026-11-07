@@ -13,6 +13,19 @@ static unsigned count;
 static uint32_t sectorSize, volumeSize, pageSize, preparedSector, limit;
 static uint8_t scanBuffer[2048];
 
+uint32_t uartLogPageSize(void) { return pageSize; }
+
+bool uartLogValidPage(const uint8_t *page, const uartLogEntry_t *log)
+{
+    const unsigned payloadSize = log->pageSize - UART_LOGGER_PAGE_METADATA;
+    const uint8_t *meta = page + payloadSize;
+    const unsigned length = meta[2] | (meta[3] & 0x7f) << 8;
+    return meta[0] == 'U' && meta[1] == 'R' &&
+        uartLogGet32(meta + 4) == log->sequence &&
+        ((meta[3] & 0x80) ? length <= payloadSize : length == payloadSize) &&
+        uartLogGet32(meta + 12) == crc16_ccitt_update(0, page, log->pageSize - 4);
+}
+
 uint32_t uartLogGet32(const uint8_t *p)
 {
     return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
@@ -56,6 +69,21 @@ void uartLogFlush(void)
 static bool scanLog(uartLogEntry_t *log, uint32_t end)
 {
     log->size = log->dataOffset;
+    if (log->version == 3) {
+        for (uint32_t address = log->start + log->dataOffset; address + log->pageSize <= end; address += log->pageSize) {
+            if (flashfsReadAbs(address, scanBuffer, log->pageSize) != (int)log->pageSize) return false;
+            if (!uartLogValidPage(scanBuffer, log)) return true;
+            const uint8_t *meta = scanBuffer + log->pageSize - UART_LOGGER_PAGE_METADATA;
+            log->size += log->pageSize;
+            log->rawSize += meta[2] | (meta[3] & 0x7f) << 8;
+            log->dropped = uartLogGet32(meta + 8);
+            if (meta[3] & 0x80) {
+                log->complete = true;
+                return true;
+            }
+        }
+        return true;
+    }
     for (uint32_t address = log->start + log->dataOffset; address < end;) {
         const unsigned size = MIN(sizeof(scanBuffer), end - address);
         if (flashfsReadAbs(address, scanBuffer, size) != (int)size) return false;
@@ -83,37 +111,39 @@ bool uartLogScan(void)
     if (!geometry || !geometry->sectorSize || volumeSize / geometry->sectorSize < 2) return false;
     sectorSize = geometry->sectorSize;
     pageSize = MAX(64U, geometry->pageSize);
-    if (sectorSize % 64 || pageSize % 64 || pageSize + 128 > sectorSize) return false;
+    if (sectorSize % pageSize || pageSize % 64 || pageSize > sizeof(scanBuffer) || 3 * pageSize > sectorSize) return false;
     bool nonempty = false;
     // A sector is reusable only after its previous file header is erased.
     // Recovery never trusts FlashFS's linear free-space cursor after wrapping.
     for (uint32_t address = 0; address < volumeSize; address += sectorSize) {
         if (flashfsReadAbs(address, scanBuffer, 64) != 64) return false;
         for (unsigned i = 0; i < 64; i++) nonempty |= scanBuffer[i] != 255;
-        if (memcmp(scanBuffer, "UARTLOG", 7) || (scanBuffer[7] != 1 && scanBuffer[7] != 2) ||
+        if (memcmp(scanBuffer, "UARTLOG", 7) || (scanBuffer[7] < 1 || scanBuffer[7] > 3) ||
             uartLogGet32(scanBuffer + 60) != crc16_ccitt_update(0, scanBuffer, 60)) continue;
         if (count == UART_LOGGER_MAX_LOGS) return false;
         uartLogEntry_t entry = {0};
         entry.version = scanBuffer[7];
-        entry.sequence = scanBuffer[7] == 2 ? uartLogGet32(scanBuffer + 20) : 0;
-        entry.dataOffset = scanBuffer[7] == 2 ? uartLogGet32(scanBuffer + 24) : 64;
+        entry.sequence = scanBuffer[7] >= 2 ? uartLogGet32(scanBuffer + 20) : 0;
+        entry.dataOffset = scanBuffer[7] >= 2 ? uartLogGet32(scanBuffer + 24) : 64;
+        entry.pageSize = scanBuffer[7] == 3 ? uartLogGet32(scanBuffer + 28) : 0;
+        if (entry.version == 3 && (entry.pageSize != pageSize || entry.dataOffset != pageSize)) return false;
         entry.start = address;
         if (entry.sequence > 99999999 || entry.dataOffset < 64 || entry.dataOffset % 64 || entry.dataOffset >= sectorSize) return false;
+        // Validate the whole prefix before looking for more sector headers.
+        // Arbitrary raw input can itself contain a checksummed UARTLOG header
+        // at an erase boundary; it is still payload inside a valid page.
+        if (!scanLog(&entry, volumeSize)) return false;
         unsigned pos = count++;
         while (pos && logs[pos - 1].sequence > entry.sequence) {
             logs[pos] = logs[pos - 1];
             pos--;
         }
         logs[pos] = entry;
+        address = alignSector(entry.start + entry.size) - sectorSize;
     }
     if (!count) return !nonempty;
     for (unsigned i = 0; i < count; i++) {
         if (i && logs[i].sequence == logs[i - 1].sequence) return false;
-        uint32_t end = volumeSize;
-        for (unsigned j = 0; j < count; j++) {
-            if (logs[j].start > logs[i].start) end = MIN(end, logs[j].start);
-        }
-        if (!scanLog(&logs[i], end)) return false;
     }
     return true;
 }
@@ -166,9 +196,10 @@ bool uartLogBegin(const uint8_t *template)
     flashfsSeekAbs(start);
     uint8_t header[64];
     memcpy(header, template, 64);
-    header[7] = 2;
+    header[7] = 3;
     uartLogPut32(header + 20, sequence);
     uartLogPut32(header + 24, pageSize);
+    uartLogPut32(header + 28, pageSize);
     uartLogPut32(header + 60, crc16_ccitt_update(0, header, 60));
     flashfsWrite(header, 64, false);
     memset(header, 0, sizeof(header));
@@ -179,7 +210,7 @@ bool uartLogBegin(const uint8_t *template)
         flashfsWrite(header, 64, false);
     }
     uartLogFlush();
-    logs[count++] = (uartLogEntry_t){ .sequence = sequence, .start = start, .size = pageSize, .dataOffset = pageSize, .version = 2 };
+    logs[count++] = (uartLogEntry_t){ .sequence = sequence, .start = start, .size = pageSize, .dataOffset = pageSize, .pageSize = pageSize, .version = 3 };
     return true;
 }
 

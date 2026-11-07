@@ -203,7 +203,7 @@ TEST_F(UartLoggerTest, InterruptedCaptureGetsNewNumberAndVerifiedPrefix)
     ASSERT_TRUE(uartLoggerFilesInit());
     ASSERT_EQ(2u, uartLogCount());
     EXPECT_FALSE(uartLogEntry(0)->complete);
-    EXPECT_EQ(100u, payload(0).size());
+    EXPECT_EQ(96u, payload(0).size());
     EXPECT_EQ(2u, uartLogEntry(1)->sequence);
 }
 
@@ -285,7 +285,7 @@ TEST_F(UartLoggerTest, UsbFilesRecoverVerifiedPrefixOnDamagedTail)
     uartLoggerInit(); send(100); uartLoggerStop();
     stored[128 + 16] ^= 1;
     ASSERT_TRUE(uartLoggerFilesInit());
-    EXPECT_EQ(44u, uartLoggerFileSize(0, true));
+    EXPECT_EQ(48u, uartLoggerFileSize(0, true));
     EXPECT_NE(nullptr, strstr(uartLoggerFileStatus(), "INCOMPLETE"));
 }
 
@@ -293,13 +293,13 @@ TEST_F(UartLoggerTest, RecoveryRejectsChecksummedBlocksFromAnotherSession)
 {
     uartLoggerInit(); send(44, 99); uartLoggerStop();
     std::vector<uint8_t> oldBlock(stored.begin() + 64, stored.begin() + 128);
-    uartLoggerInit(); send(44, 1); uartLoggerStop();
+    uartLoggerInit(); send(60, 1); uartLoggerStop();
     const auto *log = uartLogEntry(1);
     const uint32_t footer = log->start + log->size - 64;
     std::copy(oldBlock.begin(), oldBlock.end(), stored.begin() + footer);
     ASSERT_TRUE(uartLoggerFilesInit());
     EXPECT_FALSE(uartLogEntry(1)->complete);
-    EXPECT_EQ(44u, payload(1).size());
+    ASSERT_EQ(48u, payload(1).size());
     EXPECT_EQ(1, payload(1)[0]);
     uartLoggerInit(); uartLoggerStop();
     ASSERT_TRUE(uartLoggerFilesInit());
@@ -338,4 +338,100 @@ TEST_F(UartLoggerTest, FullLogReadsUseSessionOffsetsAndClampAtFileEnd)
         uartLoggerReadLog(index, result, sizeof(result), log->size);
         EXPECT_TRUE(std::all_of(result, result + sizeof(result), [](uint8_t v) { return v == 0; }));
     }
+}
+
+TEST_F(UartLoggerTest, SparseBytesPackWithoutTimeOrPerByteOverhead)
+{
+    geometry.pageSize = 2048; geometry.sectorSize = 8192;
+    uartLoggerInit();
+    for (unsigned i = 0; i < 1000; i++) {
+        send(1, i); ticks();
+    }
+    // No partially filled payload page is programmed on an idle timer.
+    EXPECT_EQ(2048u, cursor);
+    uartLoggerStop();
+    ASSERT_TRUE(uartLoggerFilesInit());
+    ASSERT_EQ(1000u, payload(0).size());
+    EXPECT_EQ(4096u, uartLogEntry(0)->size);
+    EXPECT_EQ(3, uartLogEntry(0)->version);
+    const auto data = payload(0);
+    for (unsigned i = 0; i < data.size(); i++) EXPECT_EQ(i & 255, data[i]);
+}
+
+TEST_F(UartLoggerTest, NandPagesPreserveAllFFAndRandomReadsAcrossFooter)
+{
+    capacity = 131072; stored.assign(capacity, 255);
+    geometry.pageSize = 2048; geometry.sectorSize = 16384;
+    uartLoggerInit();
+    for (unsigned n = 0; n < 4; n++) {
+        for (unsigned i = 0; i < 2032; i++) receiver(255, nullptr);
+        ticks(160);
+    }
+    uartLoggerStop();
+    ASSERT_TRUE(uartLoggerFilesInit());
+    ASSERT_EQ(8128u, payload(0).size());
+    const auto data = payload(0);
+    EXPECT_TRUE(std::all_of(data.begin(), data.end(), [](uint8_t v) { return v == 255; }));
+    uint8_t result[512];
+    for (unsigned offset : {2000u, 6000u, 0u, 8100u}) {
+        uartLoggerReadRaw(0, result, sizeof(result), offset);
+        for (unsigned i = 0; i < sizeof(result); i++) EXPECT_EQ(offset + i < 8128 ? 255 : 0, result[i]);
+    }
+    // Four full pages plus a header and empty closing page: never 64-byte records.
+    EXPECT_EQ(6u * 2048, uartLogEntry(0)->size);
+}
+
+TEST_F(UartLoggerTest, TornNandPageKeepsOnlyCommittedPrefix)
+{
+    geometry.pageSize = 2048; geometry.sectorSize = 8192;
+    uartLoggerInit(); send(3000); uartLoggerStop();
+    // Cut the final page before its footer is committed.
+    std::fill(stored.begin() + 6000, stored.begin() + 6144, 255);
+    ASSERT_TRUE(uartLoggerFilesInit());
+    EXPECT_FALSE(uartLogEntry(0)->complete);
+    EXPECT_EQ(2032u, payload(0).size());
+    uartLoggerInit(); send(5); uartLoggerStop();
+    ASSERT_TRUE(uartLoggerFilesInit());
+    ASSERT_EQ(2u, uartLogCount());
+    EXPECT_EQ(2u, uartLogEntry(1)->sequence);
+}
+
+TEST_F(UartLoggerTest, LegacyVersionTwoStillExportsTimestampedCapture)
+{
+    uint8_t header[64] = { 'U', 'A', 'R', 'T', 'L', 'O', 'G', 2 };
+    uartLogPut32(header + 20, 7);
+    uartLogPut32(header + 24, 64);
+    uartLogPut32(header + 60, crc16_ccitt_update(0, header, 60));
+    std::copy(header, header + 64, stored.begin());
+    uint8_t record[64] = { 'U', 'L', 1, 3 };
+    uartLogPut32(record + 16, 7);
+    memcpy(record + 20, "abc", 3);
+    uint16_t crc = crc16_ccitt_update(0, record, 12);
+    uartLogPut32(record + 12, crc16_ccitt_update(crc, record + 16, 48));
+    std::copy(record, record + 64, stored.begin() + 64);
+    uartLoggerInit(); send(10); uartLoggerStop();
+    ASSERT_TRUE(uartLoggerFilesInit());
+    ASSERT_EQ(2u, uartLogCount());
+    EXPECT_EQ((std::vector<uint8_t>{'a', 'b', 'c'}), payload(0));
+    EXPECT_EQ(8u, uartLogEntry(1)->sequence);
+    EXPECT_EQ(3, uartLogEntry(1)->version);
+}
+
+TEST_F(UartLoggerTest, RawPayloadContainingValidFileHeaderIsNotAnotherLog)
+{
+    geometry.pageSize = 256; geometry.sectorSize = 1024;
+    std::vector<uint8_t> bytes(2000, 0x55);
+    uint8_t *fake = bytes.data() + 720; // Start of the second physical sector.
+    memset(fake, 0, 64);
+    memcpy(fake, "UARTLOG", 7);
+    fake[7] = 2;
+    uartLogPut32(fake + 20, 900);
+    uartLogPut32(fake + 24, 256);
+    uartLogPut32(fake + 60, crc16_ccitt_update(0, fake, 60));
+    uartLoggerInit();
+    for (uint8_t b : bytes) receiver(b, nullptr);
+    uartLoggerStop();
+    ASSERT_TRUE(uartLoggerFilesInit());
+    ASSERT_EQ(1u, uartLogCount());
+    EXPECT_EQ(bytes, payload(0));
 }

@@ -5,6 +5,8 @@
 
 #define UART_LOGGER_MAX_LOGS 32
 #define UART_LOGGER_BLOCK_SIZE 64
+#define UART_LOGGER_MAX_PAGE_SIZE 2048
+#define UART_LOGGER_PAGE_METADATA 16
 
 typedef struct uartLogEntry_s {
     uint32_t sequence;
@@ -13,6 +15,7 @@ typedef struct uartLogEntry_s {
     uint32_t dataOffset;
     uint32_t rawSize;
     uint32_t dropped;
+    uint32_t pageSize;
     uint8_t version;
     bool complete;
 } uartLogEntry_t;
@@ -29,3 +32,5 @@ bool uartLogValidRecord(const uint8_t *record);
 bool uartLogRecordMatches(const uint8_t *record, const uartLogEntry_t *log);
 uint32_t uartLogGet32(const uint8_t *p);
 void uartLogPut32(uint8_t *p, uint32_t value);
+uint32_t uartLogPageSize(void);
+bool uartLogValidPage(const uint8_t *page, const uartLogEntry_t *log);
