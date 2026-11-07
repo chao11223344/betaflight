@@ -97,7 +97,8 @@ mode for the circular format. Blackbox Explorer cannot decode these custom logs.
 
 ## Timing And Failure Handling
 
-The receive ring buffers up to 4095 bytes. New v3 captures pack incoming bytes
+The receive ring buffers up to 32767 bytes (32 KiB allocation). On STM32F405 it
+uses CPU-only CCM because reception is interrupt-driven, not DMA. New v3 captures pack incoming bytes
 into a physical Flash page, retaining only 16 bytes of recovery metadata per
 page. A 2048-byte page stores 2032 raw bytes (99.22% utilization); a 256-byte
 page stores 240 (93.75%). There are no block or per-byte timestamps.
@@ -105,10 +106,14 @@ page stores 240 (93.75%). There are no block or per-byte timestamps.
 Sparse data remains in RAM until a page fills or recording stops. There is no
 idle-time flush creating padded small records. Enter CLI/`msc` before cutting
 power to save a short recording; an abrupt power loss can lose all of a short
-capture that has not filled one page. The 1 kHz task queues up to 64 physical
-bytes per invocation, independent of incoming protocol/frame boundaries.
+capture that has not filled one page. The 1 kHz task queues as much of one physical
+page as the FlashFS buffer accepts, independent of input protocol/frame boundaries.
 
-Sector erases run while RX interrupts continue buffering. Slow erase/program
+Already blank NOR sectors are checked in full and are not erased again. Dirty
+sectors still require synchronous erasure while RX interrupts continue buffering.
+An initially empty RX ring covers about 2.84 seconds at 115200 8N1 or 1.31 seconds
+at 250000 8N1. Existing backlog reduces this margin; this is not a lossless guarantee.
+Slow erase/program
 operations or high input rates can overflow the ring, and that loss is counted.
 Hardware UART overruns, framing/parity errors, and electrical errors are not
 included. Validate actual sustained throughput on the board with a known byte

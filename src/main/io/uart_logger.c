@@ -28,9 +28,17 @@ PG_RESET_TEMPLATE(uartLoggerConfig_t, uartLoggerConfig,
 );
 
 // One interrupt producer and one scheduler consumer. Publish indices last.
-#define RX_SIZE 4096
+#define RX_SIZE 32768
 #define RECORD_SIZE 64
-static volatile uint8_t rxBuffer[RX_SIZE];
+// IRQ RX is CPU-only, so F405 CCM is safe and leaves DMA-capable SRAM free.
+// Cover sector erase stalls (32767 bytes ~= 2.84 s at 115200 8N1).
+// Other targets (notably F722) may already fill their small fast RAM region.
+#if defined(STM32F405)
+#define UART_LOGGER_RX_ATTRIBUTE FAST_DATA_ZERO_INIT
+#else
+#define UART_LOGGER_RX_ATTRIBUTE
+#endif
+static UART_LOGGER_RX_ATTRIBUTE volatile uint8_t rxBuffer[RX_SIZE];
 static volatile uint32_t rxHead, rxTail, dropped;
 static serialPort_t *loggerPort;
 static volatile bool active;
@@ -198,10 +206,15 @@ static bool drain(bool finish)
         put32(meta + 12, crc16_ccitt_update(0, page, size - 4));
         pageReady = true;
     }
-    if (flashfsGetWriteBufferFreeSpace() < RECORD_SIZE) return false;
+    const unsigned free = flashfsGetWriteBufferFreeSpace();
+    if (free < RECORD_SIZE) return false;
     if (!uartLogPrepareWrite()) return false;
-    flashfsWrite(page + pageSent, RECORD_SIZE, false);
-    pageSent += RECORD_SIZE;
+    // Queue as much of this page as fits, rather than programming a NOR page
+    // in four separate 64-byte operations. Never cross a physical page here.
+    const unsigned remaining = size - pageSent;
+    const unsigned length = remaining < free ? remaining : free / RECORD_SIZE * RECORD_SIZE;
+    flashfsWrite(page + pageSent, length, false);
+    pageSent += length;
     if (pageSent == size) {
         uartLogWritten();
         sealed = pageEndsLog;

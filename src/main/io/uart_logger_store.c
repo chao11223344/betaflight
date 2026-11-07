@@ -151,6 +151,25 @@ bool uartLogScan(void)
 static void eraseSector(uint32_t address)
 {
     uartLogFlush();
+    // Fresh/previously erased NOR needs no erase. Inspect the entire sector:
+    // an erased header alone does not imply its old payload has been erased.
+    if (flashGetGeometry()->flashType == FLASH_TYPE_NOR) {
+        bool blank = true;
+        for (uint32_t offset = 0; offset < sectorSize && blank; offset += sizeof(scanBuffer)) {
+            const unsigned length = MIN(sizeof(scanBuffer), sectorSize - offset);
+            if (flashfsReadAbs(address + offset, scanBuffer, length) != (int)length) {
+                blank = false;
+                break;
+            }
+            for (unsigned i = 0; i < length; i++) {
+                if (scanBuffer[i] != 0xff) {
+                    blank = false;
+                    break;
+                }
+            }
+        }
+        if (blank) return;
+    }
     flashfsEraseRange(address, address + sectorSize);
     while (!flashfsIsReady()) {}
 }

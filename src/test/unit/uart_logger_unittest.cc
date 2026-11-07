@@ -19,6 +19,8 @@ extern "C" {
 static std::vector<uint8_t> stored, pending, eraseSnapshot;
 static uint32_t capacity, claims, cursor;
 static bool writable, snapshotErase;
+static unsigned eraseCalls, bytesDuringErase;
+static unsigned writeBufferCapacity;
 static serialReceiveCallbackPtr receiver;
 static serialPort_t port;
 static flashGeometry_t geometry;
@@ -40,6 +42,12 @@ void flashfsEraseRange(uint32_t start, uint32_t end)
     ASSERT_EQ(start + geometry.sectorSize, end);
     ASSERT_LE(end, stored.size());
     EXPECT_TRUE(pending.empty());
+    eraseCalls++;
+    if (receiver && bytesDuringErase) {
+        const unsigned bytes = bytesDuringErase;
+        bytesDuringErase = 0;
+        for (unsigned i = 0; i < bytes; i++) receiver(i & 255, nullptr);
+    }
     std::fill(stored.begin() + start, stored.begin() + end, 255);
     if (snapshotErase) { eraseSnapshot = stored; snapshotErase = false; }
 }
@@ -50,7 +58,7 @@ int flashfsReadAbs(uint32_t offset, uint8_t *dest, unsigned length)
     memcpy(dest, stored.data() + offset, length);
     return length;
 }
-uint32_t flashfsGetWriteBufferFreeSpace(void) { return 127 - pending.size(); }
+uint32_t flashfsGetWriteBufferFreeSpace(void) { return writeBufferCapacity - pending.size(); }
 bool flashfsFlushAsync(bool)
 {
     if (writable) {
@@ -97,6 +105,8 @@ protected:
         geometry = {}; geometry.sectorSize = 512; geometry.pageSize = 64;
         stored.assign(capacity, 255); pending.clear(); eraseSnapshot.clear(); cursor = 0;
         snapshotErase = false; receiver = nullptr;
+        eraseCalls = bytesDuringErase = 0;
+        writeBufferCapacity = 127;
         uartLoggerConfigMutable()->uart = SERIAL_PORT_USART1;
         uartLoggerConfigMutable()->baud = 115200;
         uartLoggerConfigMutable()->parity = 0;
@@ -133,11 +143,12 @@ TEST_F(UartLoggerTest, StopDrainsBinaryDataAndPartialFlashWrites)
 
 TEST_F(UartLoggerTest, OverflowCountsDiscardedBytes)
 {
-    uartLoggerInit(); writable = false; send(5000);
+    capacity = 262144; stored.assign(capacity, 255);
+    uartLoggerInit(); writable = false; send(40000);
     uartLoggerUpdate(); writable = true; uartLoggerStop();
     ASSERT_TRUE(uartLoggerFilesInit());
-    EXPECT_EQ(905u, uartLoggerDropped());
-    EXPECT_EQ(4095u, payload(0).size());
+    EXPECT_EQ(7233u, uartLoggerDropped());
+    EXPECT_EQ(32767u, payload(0).size());
 }
 
 TEST_F(UartLoggerTest, EveryBootCreatesNextNumberAndPreservesPriorLogs)
@@ -434,4 +445,62 @@ TEST_F(UartLoggerTest, RawPayloadContainingValidFileHeaderIsNotAnotherLog)
     ASSERT_TRUE(uartLoggerFilesInit());
     ASSERT_EQ(1u, uartLogCount());
     EXPECT_EQ(bytes, payload(0));
+}
+
+TEST_F(UartLoggerTest, BlankNorSectorsDoNotTriggerEraseAt64KiBBoundaries)
+{
+    capacity = 524288; stored.assign(capacity, 255);
+    geometry.flashType = FLASH_TYPE_NOR;
+    geometry.pageSize = 256; geometry.sectorSize = 65536;
+    uartLoggerInit();
+    for (unsigned i = 0; i < 800; i++) { send(240); ticks(); }
+    uartLoggerStop();
+    ASSERT_TRUE(uartLoggerFilesInit());
+    ASSERT_EQ(1u, uartLogCount());
+    EXPECT_EQ(0u, eraseCalls);
+    EXPECT_EQ(0u, uartLoggerDropped());
+    const auto data = payload(0);
+    ASSERT_EQ(192000u, data.size());
+    for (unsigned i = 0; i < data.size(); i++) EXPECT_EQ(i % 240, data[i]);
+}
+
+TEST_F(UartLoggerTest, DirtySectorTailIsErasedAndTenKiBReceivedDuringEraseSurvives)
+{
+    capacity = 524288; stored.assign(capacity, 255);
+    geometry.flashType = FLASH_TYPE_NOR;
+    geometry.pageSize = 256; geometry.sectorSize = 65536;
+    // The next sector's header is blank but its final byte is dirty.
+    stored[131071] = 0;
+    uartLoggerInit();
+    std::vector<uint8_t> expected;
+    for (unsigned i = 0; i < 255; i++) {
+        send(240); ticks();
+        for (unsigned b = 0; b < 240; b++) expected.push_back(b);
+    }
+    bytesDuringErase = 10000;
+    send(240);
+    for (unsigned b = 0; b < 240; b++) expected.push_back(b);
+    ticks(3000);
+    for (unsigned b = 0; b < 10000; b++) expected.push_back(b & 255);
+    uartLoggerStop();
+    ASSERT_TRUE(uartLoggerFilesInit());
+    EXPECT_EQ(1u, eraseCalls);
+    EXPECT_EQ(0u, bytesDuringErase);
+    EXPECT_EQ(0u, uartLoggerDropped());
+    EXPECT_EQ(expected, payload(0));
+}
+
+TEST_F(UartLoggerTest, FullNorPageIsQueuedInOneSchedulerTickWhenBufferHasSpace)
+{
+    geometry.pageSize = 256; geometry.sectorSize = 4096;
+    writeBufferCapacity = 2047;
+    uartLoggerInit();
+    send(240);
+    ticks(1);
+    EXPECT_EQ(256u, pending.size());
+    uartLoggerStop();
+    ASSERT_TRUE(uartLoggerFilesInit());
+    const auto data = payload(0);
+    ASSERT_EQ(240u, data.size());
+    for (unsigned i = 0; i < data.size(); i++) EXPECT_EQ(i, data[i]);
 }
